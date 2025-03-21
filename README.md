@@ -1,1 +1,2 @@
-# SDLTTFSharp-FNA
+# FreeTypeSharp-FNA
+This is an text drawing lib based on freetype lib for FNA,provides easy ways to draw an text to the screen.Currently,it doesn't support long text because I haven't change the way it draws.Problems will be fixed next version maybe.
