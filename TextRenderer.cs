@@ -1,11 +1,13 @@
 ﻿extern alias FNA;
 using FNA::Microsoft.Xna.Framework;
 using FNA::Microsoft.Xna.Framework.Graphics;
+using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection.Emit;
+using System.Runtime.InteropServices;
 using static SDLTTFSharp_FNA.FreeTypeNative;
+using static SDLTTFSharp_FNA.TextRenderer.FreeTypeFont;
 using SDL = FNA::SDL3.SDL;
 
 namespace SDLTTFSharp_FNA
@@ -42,13 +44,6 @@ namespace SDLTTFSharp_FNA
                 HashCode.Combine(FontKey, Text, Color);
         }
 
-        public class TextureAtlasPage
-        {
-            public Texture2D Texture;
-            public int CurrentY;
-            public readonly List<Rectangle> Regions = new List<Rectangle>();
-        }
-
         #endregion
         #region 字体封装
 
@@ -58,32 +53,38 @@ namespace SDLTTFSharp_FNA
         public class FreeTypeFont : IDisposable
         {
             #region 核心数据结构
-            private const int AtlasPageSize = 2048;
-            private readonly List<TextureAtlasPage> _atlasPages = new List<TextureAtlasPage>();
-            private readonly Dictionary<string, (TextureAtlasPage page, Rectangle region)> _glyphCache = new Dictionary<string, (TextureAtlasPage, Rectangle)>();
-            private readonly GraphicsDevice _graphicsDevice;
-
-            private class TextureAtlasPage
-            {
-                public Texture2D Texture { get; set; }
-                public int CurrentY { get; set; }
-                public List<Rectangle> Regions { get; } = new List<Rectangle>();
-            }
+            private static GraphicsDevice? _graphicsDevice;
             #endregion
 
             #region 字体属性
+            public string Name { get; private set; }
             public IntPtr Face { get; private set; }
             public int Size { get; }
             public string FontPath { get; }
             #endregion
-
+            #region 结构体定义
+            public struct StoredChar
+            {
+                public string fontname;
+                public int atlasIndex;
+                public uint width;
+                public uint height;
+                public uint xOffset;
+                public uint yOffset;
+                public uint advance;
+                public uint bearingX;
+                public uint bearingY;
+                public int pitch;
+            }
+            #endregion
             #region 初始化与加载
-            public FreeTypeFont(GraphicsDevice device, IntPtr library, string fontPath, int size)
+            public FreeTypeFont(GraphicsDevice device, IntPtr library, string fontPath, int size, string name)
             {
                 _graphicsDevice = device;
                 FontPath = fontPath;
                 Size = size;
                 Face = library;
+                Name = name;
             }
             public void SetSize(int size)
             {
@@ -91,86 +92,159 @@ namespace SDLTTFSharp_FNA
             }
             #endregion
 
-            #region 文本渲染入口
-            public unsafe (Texture2D texture, Rectangle sourceRect) RenderText(string text, Color color)
+            #region 文本渲染
+            public unsafe bool RenderGlyphToAtlas(IntPtr context, int atlasIndex, char singleChar, out StoredChar? currentCharData)
             {
-                var cacheKey = $"{text}|{color.PackedValue}";
-
-                if (_glyphCache.TryGetValue(cacheKey, out var cached))
-                    return (cached.page.Texture, cached.region);
-                var result = FT.RenderText(Face, text, color.R, color.G, color.B);
-                var entry = AddToAtlas(result);
-                _glyphCache[cacheKey] = entry;
-                return (entry.page.Texture, entry.region);
-            }
-            #endregion
-
-            private unsafe (TextureAtlasPage page, Rectangle region) AddToAtlas(BitmapResult bitmap)
-            { 
-                // 寻找可用页面
-                foreach (var page in _atlasPages)
+                if (atlasIndex < 0)
                 {
-                    if (TryAddToPage(page, bitmap.Width, bitmap.Height, out var rect))
+                    currentCharData = null;
+                    return false;
+                }
+                TextureAtlas atlas = _fontAtlas[atlasIndex];
+                if (atlas.isFull)
+                {
+                    currentCharData = null;
+                    return false;
+                }
+                IntPtr m = FT.RenderGlyph(context, singleChar);
+                GlyphMetrics metrics = Marshal.PtrToStructure<GlyphMetrics>(m);
+                Rectangle bestRect = new Rectangle();
+                int bestShortSideFit = int.MaxValue;
+
+                foreach (var rect in atlas.freeRects)
+                {
+                    int leftoverHoriz = Math.Abs((int)rect.Width - (int)metrics.Width);
+                    int leftoverVert = Math.Abs((int)rect.Height - (int)metrics.Height);
+                    int shortSideFit = Math.Min(leftoverHoriz, leftoverVert);
+
+                    if (rect.Width >= metrics.Width && rect.Height >= metrics.Height)
                     {
-                        UpdateTexture(page, bitmap, rect);
-                        return (page, rect);
+                        if (shortSideFit < bestShortSideFit)
+                        {
+                            bestRect = rect;
+                            bestShortSideFit = shortSideFit;
+                        }
                     }
                 }
 
-                // 创建新页面
-                var newPage = new TextureAtlasPage
+                if (bestShortSideFit != int.MaxValue)
                 {
-                    Texture = new Texture2D(_graphicsDevice, AtlasPageSize, AtlasPageSize, false, SurfaceFormat.Color),
-                    CurrentY = 0
-                };
-                _atlasPages.Add(newPage);
+                    // 分割空闲矩形
+                    Rectangle newRect = new Rectangle(bestRect.X, bestRect.Y, (int)metrics.Width, (int)metrics.Height);
 
-                if (TryAddToPage(newPage, bitmap.Width, bitmap.Height, out var newRect))
-                {
-                    UpdateTexture(newPage, bitmap, newRect);
-                    return (newPage, newRect);
+                    // 更新空闲矩形列表
+                    if (bestRect.Width > newRect.Width)
+                    {
+                        new Rectangle(bestRect.X + newRect.Width, bestRect.Y, bestRect.Width - newRect.Width, bestRect.Height);
+                    }
+                    if (bestRect.Height > newRect.Height)
+                    {
+                        atlas.freeRects.Add(new Rectangle(bestRect.X, bestRect.Y + newRect.Height, bestRect.Width, bestRect.Height - newRect.Height));
+                    }
+                    atlas.textureRegion.SetDataPointerEXT(0, newRect, metrics.Buffer, (int)(metrics.Width * metrics.Height * 4));
+                    StoredChar sc = new StoredChar
+                    {
+                        advance = metrics.Advance,
+                        atlasIndex = atlasIndex,
+                        bearingX = metrics.BearingX,
+                        bearingY = metrics.BearingY,
+                        fontname = Name,
+                        xOffset = (uint)bestRect.X,
+                        yOffset = (uint)bestRect.Y,
+                        width = metrics.Width,
+                        height = metrics.Height,
+                        pitch = metrics.Pitch
+                    };
+                    chars.Add(singleChar, sc);
+                    currentCharData = sc;
+                    return true;
                 }
-
-                throw new FreeTypeException("无法将字形添加到图集");
+                atlas.isFull = true;
+                currentCharData = null;
+                FT.FreeGlyph(m);
+                return false;
             }
-
-            #region 图集管理
-            private bool TryAddToPage(TextureAtlasPage page, int width, int height, out Rectangle rect)
+            public unsafe void RenderString(SpriteBatch batch, string text, Color color, Vector2 pos, float scale)
             {
-                // 简单垂直布局算法
-                if (page.CurrentY + height > AtlasPageSize)
+                int currentAdvance = 0;
+                FT.MeasureString(Face, text, out int width, out int height, out int baselineY);
+                Vector2 currentPos = new Vector2(pos.X, pos.Y + baselineY);
+                foreach (var singleChar in text)
                 {
-                    rect = default;
-                    return false;
+                    if (chars.TryGetValue(singleChar, out StoredChar value))
+                    {
+                        var atlas = _fontAtlas[value.atlasIndex];
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX), (int)(currentPos.Y - (int)value.bearingY), (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), color);
+                        currentPos.X += value.advance;
+                    }
+                    else if (RenderGlyphToAtlas(Face, _fontAtlas.Count - 1, singleChar, out StoredChar? currentCharData))
+                    {
+                        StoredChar currentChar = currentCharData.Value;
+                        var atlas = _fontAtlas[^1];
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), color);
+                        currentPos.X += currentChar.advance;
+                    }
+                    else
+                    {
+                        _fontAtlas.Add(new TextureAtlas());
+                        RenderGlyphToAtlas(Face, _fontAtlas.Count - 1, singleChar, out StoredChar? currentCharData2);
+                        StoredChar currentChar = currentCharData2.Value;
+                        var atlas = _fontAtlas[^1];
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), color);
+                        currentPos.X += currentChar.advance;
+                    }
                 }
-
-                rect = new Rectangle(0, page.CurrentY, width, height);
-                page.CurrentY += height;
-                page.Regions.Add(rect);
-                return true;
             }
-
-            private unsafe void UpdateTexture(TextureAtlasPage page, BitmapResult bitmap, Rectangle rect)
+            public unsafe void RenderString(SpriteBatch batch, string text, Color color, Color borderColor, Vector2 pos, float scale)
             {
-                var data = new Color[rect.Width * rect.Height];
-                Color* src = (Color*)bitmap.Buffer;
-                for (int i = 0; i < rect.Width * rect.Height; i++)
+                int currentAdvance = 0;
+                FT.MeasureString(Face, text, out int width, out int height, out int baselineY);
+                Vector2 currentPos = new Vector2(pos.X, pos.Y + baselineY);
+                foreach (var singleChar in text)
                 {
-                    data[i] = src[i];
+                    if (chars.TryGetValue(singleChar, out StoredChar value))
+                    {
+                        var atlas = _fontAtlas[value.atlasIndex];
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX), (int)(currentPos.Y - (int)value.bearingY) + 1, (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX), (int)(currentPos.Y - (int)value.bearingY) - 1, (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX) + 1, (int)(currentPos.Y - (int)value.bearingY), (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX) - 1, (int)(currentPos.Y - (int)value.bearingY), (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX), (int)(currentPos.Y - (int)value.bearingY), (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), color);
+                        currentPos.X += value.advance;
+                    }
+                    else if (RenderGlyphToAtlas(Face, _fontAtlas.Count - 1, singleChar, out StoredChar? currentCharData))
+                    {
+                        StoredChar currentChar = currentCharData.Value;
+                        var atlas = _fontAtlas[^1];
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX) + 1, (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX) - 1, (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY) + 1, (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY) - 1, (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), color);
+                        currentPos.X += currentChar.advance;
+                    }
+                    else
+                    {
+                        _fontAtlas.Add(new TextureAtlas());
+                        RenderGlyphToAtlas(Face, _fontAtlas.Count - 1, singleChar, out StoredChar? currentCharData2);
+                        StoredChar currentChar = currentCharData2.Value;
+                        var atlas = _fontAtlas[^1];
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX) + 1, (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX) - 1, (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY) + 1, (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY) - 1, (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), borderColor);
+                        batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)currentChar.bearingX), (int)(currentPos.Y - (int)currentChar.bearingY), (int)currentChar.width, (int)currentChar.height), new Rectangle((int)currentChar.xOffset, (int)currentChar.yOffset, (int)currentChar.width, (int)currentChar.height), color);
+                        currentPos.X += currentChar.advance;
+                    }
                 }
-                page.Texture.SetData(0, rect, data, 0, data.Length);
             }
             #endregion
+
+
 
             #region 资源清理
             public void Dispose()
             {
-                foreach (var page in _atlasPages)
-                {
-                    page.Texture?.Dispose();
-                }
-                _atlasPages.Clear();
-                _glyphCache.Clear();
 
                 if (Face != IntPtr.Zero)
                 {
@@ -181,14 +255,27 @@ namespace SDLTTFSharp_FNA
             #endregion
         }
 
+        public static bool Draw = true;
         #endregion
 
-        private GraphicsDevice device;
-        private readonly Dictionary<string, string> _fontCache = new Dictionary<string, string>();
+        public static Dictionary<char, StoredChar> chars = new Dictionary<char, StoredChar>();
+        public struct TextureAtlas
+        {
+            public bool isFull = false;
+            public Texture2D textureRegion = new Texture2D(device, 2048, 2048);
+            public List<Rectangle> freeRects = new List<Rectangle>{ new Rectangle(0, 0, 2048, 2048) }; // 新增空闲矩形列表
 
+            public TextureAtlas()
+            {
+            }
+        }
+        private static GraphicsDevice? device;
+        private readonly Dictionary<string, string> _fontCache = new Dictionary<string, string>();
+        private readonly Dictionary<string, FreeTypeFont> _registeredFonts = new Dictionary<string, FreeTypeFont>();
+        private static List<TextureAtlas> _fontAtlas = new List<TextureAtlas>();
         public TextRenderer(GraphicsDevice device)
         {
-            this.device = device;
+            TextRenderer.device = device;
         }
 
         public void RegisterFont(string fontName, string fontPath)
@@ -201,8 +288,13 @@ namespace SDLTTFSharp_FNA
         {
             if (_fontCache.TryGetValue(fontName, out var path))
             {
+                if (_registeredFonts.TryGetValue(fontName + size, out var font))
+                {
+                    return font;
+                }
                 var context = FT.CreateFTFont(path, size);
-                var newFont = new FreeTypeFont(device, context, path, size);
+                var newFont = new FreeTypeFont(device, context, path, size, fontName + size);
+                _registeredFonts.Add(fontName + size, newFont);
                 return newFont;
             }
             throw new FreeTypeException($"字体未注册: {fontName}");
@@ -210,7 +302,11 @@ namespace SDLTTFSharp_FNA
 
         public void Dispose()
         {
-
+            foreach (var font in _registeredFonts.Values)
+            {
+                font.Dispose();
+            }
+            _registeredFonts.Clear();
         }
 
         #region 错误处理

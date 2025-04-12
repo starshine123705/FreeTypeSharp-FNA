@@ -1,4 +1,6 @@
 ﻿extern alias FNA;
+
+using FNA::Microsoft.Xna.Framework;
 using System;
 using System.Runtime.InteropServices;
 using FT_Fixed = System.Int32;
@@ -95,6 +97,23 @@ namespace SDLTTFSharp_FNA
             public FT_Pos y;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LineInfo
+        {
+            public uint width;
+            public uint height;
+            public uint baseline;
+        };
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct BitmapResult
+        {
+            public IntPtr buffer;
+            public uint bufferWidth;
+            public uint bufferHeight;
+            public IntPtr lines;
+            public uint numLines;
+        };
         // 面结构（简化版）
         [StructLayout(LayoutKind.Sequential)]
         public struct FT_FaceRec
@@ -109,49 +128,18 @@ namespace SDLTTFSharp_FNA
             public IntPtr glyph;
         }
         [StructLayout(LayoutKind.Sequential)]
-        public struct BitmapResult
+        public struct GlyphMetrics
         {
-            public IntPtr Buffer;
-            public int Width;
-            public int Height;
-        }
+            public int Pitch;        // 字形位图行距
+            public uint Width;        // 字形位图宽度
+            public uint Height;       // 字形位图高度
+            public uint BearingX;     // 水平起始位置偏移
+            public uint BearingY;     // 垂直起始位置偏移
+            public uint Advance;      // 水平步进值
+            public IntPtr Buffer;       // 字形位图数据
+        };
         public static class FT
         {
-            private const string FreeTypeLib = "freetype"; // Windows: "freetype.dll", Linux: "libfreetype.so"
-
-            [DllImport(FreeTypeLib)]
-            public static extern FT_Error FT_Init_FreeType(out IntPtr library);
-
-            [DllImport(FreeTypeLib)]
-            public static extern FT_Error FT_Done_FreeType(IntPtr library);
-
-            [DllImport(FreeTypeLib, CharSet = CharSet.Ansi)]
-            public static extern FT_Error FT_New_Face(
-                IntPtr library,
-                string filepathname,
-                int face_index,
-                out IntPtr face);
-
-            [DllImport(FreeTypeLib)]
-            public static extern FT_Error FT_Done_Face(IntPtr face);
-
-            [DllImport(FreeTypeLib)]
-            public static extern FT_Error FT_Set_Pixel_Sizes(
-                IntPtr face,
-                uint pixel_width,
-                uint pixel_height);
-
-            [DllImport(FreeTypeLib)]
-            public static extern FT_Error FT_Load_Char(
-                IntPtr face,
-                uint char_code,
-                FT_Load_Flags load_flags);
-
-            [DllImport(FreeTypeLib)]
-            public static extern FT_UInt FT_Get_Char_Index(IntPtr face, uint charcode);
-
-            [DllImport(FreeTypeLib)]
-            public static extern FT_Error FT_Load_Glyph(IntPtr face, uint glyph_index, FT_Load_Flags load_flags);
             private const string FreeTypeLibFNA = "FreeType-FNA";
             [DllImport(FreeTypeLibFNA, CallingConvention = CallingConvention.Cdecl)]
             public static extern IntPtr CreateFTFont(string path, int size);
@@ -161,22 +149,18 @@ namespace SDLTTFSharp_FNA
                 IntPtr context,
                 [MarshalAs(UnmanagedType.LPWStr)] string text,
                 out int width,
-                out int height
+                out int height,
+                out int baselineY
             );
 
-            [DllImport(FreeTypeLibFNA, CallingConvention = CallingConvention.Cdecl)]
-            public static extern BitmapResult RenderText(
-                IntPtr context,
-                [MarshalAs(UnmanagedType.LPWStr)] string text,
-                byte r, byte g, byte b
-            );
-
-            [DllImport(FreeTypeLibFNA, CallingConvention = CallingConvention.Cdecl)]
-            public static extern void FreeBitmap(BitmapResult result);
+            [DllImport(FreeTypeLibFNA, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)]
+            public static extern IntPtr RenderGlyph(IntPtr context, char text);
 
             [DllImport(FreeTypeLibFNA, CallingConvention = CallingConvention.Cdecl)]
             public static extern void DisposeFont(IntPtr context);
-            
+            [DllImport(FreeTypeLibFNA, CallingConvention = CallingConvention.Cdecl)]
+            public static extern void FreeGlyph(IntPtr context);
+
             [DllImport(FreeTypeLibFNA, CallingConvention = CallingConvention.Cdecl)]
             public static extern void SetFontSize(IntPtr context, uint size);
         }

@@ -3,7 +3,7 @@
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
-	<LangVersion>9.0</LangVersion>
+	<LangVersion>10.0</LangVersion>
     <RootNamespace>SDLTTFSharp_FNA</RootNamespace>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
