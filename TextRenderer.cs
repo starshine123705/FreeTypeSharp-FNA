@@ -1,6 +1,5 @@
-﻿extern alias FNA;
-using FNA::Microsoft.Xna.Framework;
-using FNA::Microsoft.Xna.Framework.Graphics;
+﻿using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections.Generic;
@@ -8,7 +7,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using static SDLTTFSharp_FNA.FreeTypeNative;
 using static SDLTTFSharp_FNA.TextRenderer.FreeTypeFont;
-using SDL = FNA::SDL3.SDL;
+using SDL = SDL3.SDL;
 
 namespace SDLTTFSharp_FNA
 {

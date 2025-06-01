@@ -5,6 +5,8 @@ VisualStudioVersion = 17.12.35527.113
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreeTypeSharp-FNA", "FreeTypeSharp-FNA.csproj", "{5E85E658-AC78-4161-8C96-38DA7CDE5BFE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FNA.Core", "D:\FNAProjects\FNA\FNA.Core.csproj", "{4FD88F96-F40C-4FB0-BE45-29B1563DEBCD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{5E85E658-AC78-4161-8C96-38DA7CDE5BFE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5E85E658-AC78-4161-8C96-38DA7CDE5BFE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5E85E658-AC78-4161-8C96-38DA7CDE5BFE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4FD88F96-F40C-4FB0-BE45-29B1563DEBCD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4FD88F96-F40C-4FB0-BE45-29B1563DEBCD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4FD88F96-F40C-4FB0-BE45-29B1563DEBCD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4FD88F96-F40C-4FB0-BE45-29B1563DEBCD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

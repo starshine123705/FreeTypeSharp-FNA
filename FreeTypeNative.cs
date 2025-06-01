@@ -1,7 +1,4 @@
-﻿extern alias FNA;
-
-using FNA::Microsoft.Xna.Framework;
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using FT_Fixed = System.Int32;
 using FT_Long = System.Int64;

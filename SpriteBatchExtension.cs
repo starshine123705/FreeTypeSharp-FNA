@@ -1,6 +1,5 @@
-﻿extern alias FNA;
-using FNA::Microsoft.Xna.Framework;
-using FNA::Microsoft.Xna.Framework.Graphics;
+﻿using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 
 namespace SDLTTFSharp_FNA
 {
