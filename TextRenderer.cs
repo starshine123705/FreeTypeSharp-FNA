@@ -64,7 +64,6 @@ namespace SDLTTFSharp_FNA
             #region 结构体定义
             public struct StoredChar
             {
-                public string fontname;
                 public int atlasIndex;
                 public uint width;
                 public uint height;
@@ -147,14 +146,13 @@ namespace SDLTTFSharp_FNA
                         atlasIndex = atlasIndex,
                         bearingX = metrics.BearingX,
                         bearingY = metrics.BearingY,
-                        fontname = Name,
                         xOffset = (uint)bestRect.X,
                         yOffset = (uint)bestRect.Y,
                         width = metrics.Width,
                         height = metrics.Height,
                         pitch = metrics.Pitch
                     };
-                    chars.Add(singleChar, sc);
+                    chars.Add((singleChar, Name), sc);
                     currentCharData = sc;
                     return true;
                 }
@@ -170,7 +168,7 @@ namespace SDLTTFSharp_FNA
                 Vector2 currentPos = new Vector2(pos.X, pos.Y + baselineY);
                 foreach (var singleChar in text)
                 {
-                    if (chars.TryGetValue(singleChar, out StoredChar value))
+                    if (chars.TryGetValue((singleChar, Name), out StoredChar value))
                     {
                         var atlas = _fontAtlas[value.atlasIndex];
                         batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX), (int)(currentPos.Y - (int)value.bearingY), (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), color);
@@ -201,7 +199,7 @@ namespace SDLTTFSharp_FNA
                 Vector2 currentPos = new Vector2(pos.X, pos.Y + baselineY);
                 foreach (var singleChar in text)
                 {
-                    if (chars.TryGetValue(singleChar, out StoredChar value))
+                    if (chars.TryGetValue((singleChar, Name), out StoredChar value))
                     {
                         var atlas = _fontAtlas[value.atlasIndex];
                         batch.Draw(atlas.textureRegion, new Rectangle((int)(currentPos.X + (int)value.bearingX), (int)(currentPos.Y - (int)value.bearingY) + 1, (int)value.width, (int)value.height), new Rectangle((int)value.xOffset, (int)value.yOffset, (int)value.width, (int)value.height), borderColor);
@@ -239,7 +237,13 @@ namespace SDLTTFSharp_FNA
             }
             #endregion
 
-
+            #region 额外方法
+            public Vector3 MeasureString(string text)
+            {
+                FT.MeasureString(Face, text, out int width, out int height, out int baselineY);
+                return new Vector3(width, height, baselineY);
+            }
+            #endregion
 
             #region 资源清理
             public void Dispose()
@@ -257,12 +261,12 @@ namespace SDLTTFSharp_FNA
         public static bool Draw = true;
         #endregion
 
-        public static Dictionary<char, StoredChar> chars = new Dictionary<char, StoredChar>();
+        public static Dictionary<(char, string), StoredChar> chars = new Dictionary<(char, string), StoredChar>();
         public struct TextureAtlas
         {
             public bool isFull = false;
             public Texture2D textureRegion = new Texture2D(device, 2048, 2048);
-            public List<Rectangle> freeRects = new List<Rectangle>{ new Rectangle(0, 0, 2048, 2048) }; // 新增空闲矩形列表
+            public List<Rectangle> freeRects = new List<Rectangle> { new Rectangle(0, 0, 2048, 2048) }; // 新增空闲矩形列表
 
             public TextureAtlas()
             {
